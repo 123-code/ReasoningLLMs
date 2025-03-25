@@ -1,0 +1,15 @@
+ groq
+ numpy
+ sympy
+ regex
+ datasets
+ transformers
+ accelerate
+ bitsandbytes
+ scipy
+ ipywidgets
+ matplotlib
+ scikit-learn
+ tqdm
+ pandas
+ seaborn

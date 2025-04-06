@@ -76,7 +76,42 @@ class Policy(nn.Module):
         log_prob = dist.log_prob(action)
         self.policy_history.append(log_prob)
         return action
+    
+ #recompoensa basada en el formato de la respuesta    
+    
+def format_reward_function(completion_str:str) -> float:
+    allowed_pattern = r"^[\d+\-*/().\s]+$"
+    try:
+        completion = "<pensando>" + completion
+        if completion.endswith():
+            completion = completion[:-len(EOS_TOKEN)]
+        regex = r""
+        match = re.search(regex,completion,re.DOTALL)
 
+        if match is None or len(match.groups()) != 2:
+            return 0.0 
+        else:
+            answer_content = match.group(2).strip()
+            if not re.match(allowed_pattern, answer_content):
+                return 0.5
+            else:
+                return 1.0 
+    except Exception:
+        
+        return 0.0
+    
+#recompensa para codigo con formato y funcional
+def code_reward(completion: str) -> float:
+    match = re.search(r"<code>(.*?)<\/code>", completion, re.DOTALL)
+    if match is None:
+        return 0.0
+    else:
+        try:
+            exec(match.group(1))
+            return 1.0
+        except Exception as e:
+            print(e)
+            return 0.0
 
 def calculate_reward(generated_text, correct_answer):
     code = extract_code(generated_text)

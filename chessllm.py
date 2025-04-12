@@ -5,7 +5,9 @@ import torch.nn as nn
 import re
 import chess
 import chess.engine
+import chess.svg
 from peft import LoraConfig, get_peft_model, TaskType
+from IPython.display import display, SVG
 
 HF_DATASET_NAME = "bonna46/Chess-FEN-and-NL-Format-30K-Dataset"
 
@@ -13,9 +15,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 
-tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B-Instruct")
 model = AutoModelForCausalLM.from_pretrained(
-    "Qwen/Qwen2.5-7B-Instruct",
+    "Qwen/Qwen2.5-3B-Instruct",
     torch_dtype=torch.bfloat16
 )
 model.to(device)
@@ -33,7 +35,7 @@ lora_config = LoraConfig(
 model = get_peft_model(model, lora_config)
 model.print_trainable_parameters()
 
-
+# Load and inspect dataset
 dataset = load_dataset(HF_DATASET_NAME)
 print("Dataset sample:", dataset['train'][0])
 
@@ -99,20 +101,24 @@ def format_reward_function(completion_str: str) -> float:
         return 0.0
 
 def extract_move(completion_str: str) -> str:
-    """Extract the move from <movimiento> tags, ensuring UCI format."""
+    """Extract the move from <movimiento> tags or raw text, ensuring UCI format."""
     try:
-        # Try <movimiento> tags
+       
         regex = r"<movimiento>(.*?)</movimiento>"
         match = re.search(regex, completion_str, re.DOTALL)
-        if match:
+        if match and match.group(1).strip():
             move = match.group(1).strip()
-            if move and re.match(r"^[a-h][1-8][a-h][1-8]$", move):
+            if re.match(r"^[a-h][1-8][a-h][1-8]$", move):
                 return move
-            print(f"Invalid or empty UCI format in <movimiento>: '{move}'")
+            print(f"Invalid UCI format in <movimiento>: {move}")
             return None
 
-        # No fallback to avoid picking up prompt examples
-        print("No valid UCI move found in <movimiento> tags")
+        # Fallback: search for UCI-like strings
+        uci_pattern = r"\b[a-h][1-8][a-h][1-8]\b"
+        uci_matches = re.findall(uci_pattern, completion_str)
+        if uci_matches:
+            return uci_matches[-1]
+        print("No valid UCI move found in output")
         return None
     except Exception as e:
         print(f"Error in extract_move: {e}")
@@ -121,66 +127,87 @@ def extract_move(completion_str: str) -> str:
 def get_movement_reward(board, move_uci, stockfish_move):
     reward = 0.0
     if move_uci:
-        if re.match(r"^[a-h][1-8][a-h][1-8]$", move_uci):
-            valid_move = is_valid_move(board, move_uci)
-            if valid_move:
-                reward += 1.0
-                board_copy = board.copy()
-                board_copy.push(chess.Move.from_uci(move_uci))
-                score, _ = get_stockfish_eval(board_copy)
-                if score is not None:
-                    reward += score / 100.0
-                if move_uci == stockfish_move:
-                    reward += 0.5
-            else:
-                reward -= 0.5  # Invalid move
+        valid_move = is_valid_move(board, move_uci)
+        if valid_move:
+            reward += 1.0
+            board_copy = board.copy()
+            board_copy.push(chess.Move.from_uci(move_uci))
+            score, _ = get_stockfish_eval(board_copy)
+            if score is not None:
+                reward += score / 100.0
+            if move_uci == stockfish_move:
+                reward += 0.5
         else:
-            reward -= 0.7  # Malformed UCI
+            reward -= 0.5
     else:
-        reward -= 1.0  # No move
+        reward -= 1.0
     return reward
 
 def calculate_reward(format_reward: float, movement_reward: float) -> float:
     return min(2.0, format_reward + 1.5 * movement_reward)
 
-def train_reasoning(policy, episodes=10, max_length=250):
+def display_board_svg(board, move_uci=None, episode=None):
+    try:
+ 
+        svg = chess.svg.board(board=board, size=400)
+        print(f"Episode {episode} - Initial Board:")
+        display(SVG(svg)) 
+
+        with open(f"board_initial_ep{episode}.svg", "w") as f:
+            f.write(svg)
+
+
+        if move_uci and is_valid_move(board, move_uci):
+            board_copy = board.copy()
+            board_copy.push(chess.Move.from_uci(move_uci))
+            svg = chess.svg.board(board=board_copy, size=400)
+            print(f"Episode {episode} - Board after move {move_uci}:")
+            display(SVG(svg))
+            with open(f"board_after_move_ep{episode}.svg", "w") as f:
+                f.write(svg)
+    except Exception as e:
+        print(f"Error generating SVG for episode {episode}: {e}")
+
+def train_reasoning(policy, episodes=200, max_length=250):
     optimizer = torch.optim.Adam(policy.parameters(), lr=0.0001)
     print(f"Optimizer targeting {sum(p.numel() for p in policy.parameters() if p.requires_grad)} trainable parameters.")
 
     for episode in range(episodes):
-        # Get problem from dataset
+
         problem = dataset['train'][episode % len(dataset['train'])]['FEN']
         board = chess.Board(problem)
         _, stockfish_move = get_stockfish_eval(board)
 
-        # System and user prompt
+      
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are a chess expert. For a given FEN, analyze the position and explain your move choice in <pensando></pensando> tags. "
-                    "Then, output exactly one move in UCI format (4 characters, e.g., 'e2e4') in <movimiento></movimiento> tags. "
-                    "Do not output FENs, vague terms, or anything else in the move tags."
+                    "You are a chess expert tasked with analyzing chess positions and selecting the best move. "
+                    "Given a FEN position, provide a clear reasoning process within <pensando></pensando> tags, "
+                    "explaining why you choose the move. Then, output the move in UCI format (e.g., 'e2e4' for pawn from e2 to e4) "
+                    "within <movimiento></movimiento> tags. The UCI move must be exactly 4 characters, specifying source and destination squares. "
+                    "Do not output FEN strings, vague terms like 'pawn moves,' or anything other than a single UCI move in the tags."
                 )
             },
             {
                 "role": "user",
                 "content": (
-                    f"FEN: {problem}\n"
-                    f"Analyze the position, explain your reasoning in <pensando></pensando> tags, "
-                    f"and provide the best move in UCI format in <movimiento></movimiento> tags."
+                    f"Analyze the chess position given by the FEN: {problem}. "
+                    f"Explain your reasoning in <pensando></pensando> tags. "
+                    f"Then, provide the best move in UCI format within <movimiento></movimiento> tags."
                 )
             }
         ]
 
-        # Format prompt
+
         formatted_text = tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=True
         )
 
-        # Tokenize
+
         input_ids = tokenizer(formatted_text, return_tensors="pt", truncation=True, max_length=200).input_ids.to(device)
         generated = input_ids.clone()
         actions = []
@@ -202,6 +229,7 @@ def train_reasoning(policy, episodes=10, max_length=250):
         movement_r = get_movement_reward(board, move_uci, stockfish_move)
         reward = calculate_reward(format_r, movement_r)
         policy.reward_episode[-1] = reward
+        display_board_svg(board, move_uci, episode)
 
         print(f"\nEpisode {episode}:")
         print(f"FEN: {problem}")
@@ -211,7 +239,7 @@ def train_reasoning(policy, episodes=10, max_length=250):
         print(f"Stockfish Move: {stockfish_move}")
         print(f"Format Reward: {format_r}, Movement Reward: {movement_r}, Total Reward: {reward}")
 
-        # Compute discounted rewards
+
         discounted_rewards = []
         running_reward = 0
         for r in policy.reward_episode[::-1]:
@@ -238,4 +266,4 @@ def train_reasoning(policy, episodes=10, max_length=250):
 
 
 policy = Policy(model)
-train_reasoning(policy)
+train_reasoning(policy, episodes=10) 

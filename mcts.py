@@ -9,7 +9,7 @@ import os
 import time
 
 
-GROQ_API_KEY = "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"
+GROQ_API_KEY = ""
 if not GROQ_API_KEY:
     raise ValueError("GROQ_API_KEY environment variable not set.")
 

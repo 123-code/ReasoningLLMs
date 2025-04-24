@@ -9,9 +9,7 @@ import os
 import time
 
 
-GROQ_API_KEY = ""
-if not GROQ_API_KEY:
-    raise ValueError("GROQ_API_KEY environment variable not set.")
+GROQ_API_KEY = "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"
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -42,7 +40,7 @@ def safe_exec(code_string: str, result_dict: dict):
 
 
 def ask_llm(prompt: str, temperature: float = 0.7, max_tokens: int = 500) -> str:
-    """Sends a prompt to the Groq LLM and returns the response."""
+
     client = Groq(api_key=GROQ_API_KEY)
     try:
         chat_completion = client.chat.completions.create(
@@ -156,7 +154,7 @@ class MCTS:
         return current_node 
 
     def _expand(self, node: Node) -> Node:
-        """Phase 2: Expansion - Add a new child node by generating a continuation."""
+  
         logger.info("--- Expansion Phase ---")
       
         prompt = f"{node.state}\n\n# Continue the solution above. Provide the next logical step, refinement, or code segment.\n# If the solution seems complete, write the final code.\n# Ensure code is in a python block like ```python ... ```"
@@ -217,7 +215,7 @@ class MCTS:
 
 
     def _backpropagate(self, node: Node, reward: float):
-        """Phase 4: Backpropagation - Update visits and value up the tree."""
+        
         logger.info(f"--- Backpropagation Phase (Reward: {reward:.2f}) ---")
         current_node = node
         path_length = 0
@@ -231,7 +229,7 @@ class MCTS:
 
 
     def search(self):
-        """Runs the MCTS search for a specified number of iterations."""
+       
         logger.info(f"Starting MCTS search with {self.iterations} iterations.")
 
         for i in range(self.iterations):
@@ -261,7 +259,7 @@ class MCTS:
                self.best_exec_result if best_node and best_node.code_executes else "N/A"
 
     def get_best_final_node(self) -> Node | None:
-        """Selects the best child of the root based on robustness (visits) or value."""
+   
         if not self.root.children:
             return None
 
